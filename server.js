@@ -9,9 +9,10 @@ const app = express();
 // Connect Database
 connectDB();
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// --- MIDDLEWARE WAJIB DI ATAS ---
+app.use(cors()); // Izinkan semua domain (untuk development)
+app.use(express.json()); // Agar bisa baca JSON body
+app.use(express.urlencoded({ extended: false }));
 
 // Routes
 app.use('/api/journal', journalRoutes); // Prefix untuk route jurnal

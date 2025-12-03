@@ -1,81 +1,90 @@
 const Journal = require('../models/Journal');
-const User = require('../models/User');
+const User = require('../models/User'); // Pastikan User diimport
 const { analyzeJournal } = require('../services/geminiService');
 
 // @desc    Analisis & Simpan Jurnal Baru
 // @route   POST /api/journal/analyze
-// @access  Private (Perlu Login)
+// @access  Private
 const createAnalysis = async (req, res) => {
     const { text } = req.body;
-    const user = req.user; // Didapat dari middleware auth (protect)
 
-    // 1. Validasi Input
-    if (!text) {
-        return res.status(400).json({ message: 'Isi dulu curhatannya dong!' });
+    // Validasi Input Kosong
+    if (!text || text.trim().length === 0) {
+        return res.status(400).json({ message: 'Tulis sesuatu dulu dong!' });
+    }
+
+    // Pastikan user ada (dari middleware)
+    if (!req.user) {
+        return res.status(401).json({ message: 'User tidak ditemukan.' });
     }
 
     try {
-        // 2. LOGIKA PAYWALL / PEMBATASAN
-        // Jika user masih FREE, cek apakah sudah mencapai limit harian
-        if (!user.isPremium) {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0); // Set waktu ke jam 00:00 hari ini
+        const user = req.user;
 
-            // Hitung berapa jurnal yang dibuat user hari ini
+        // --- LOGIKA PAYWALL (LIMIT HARIAN) ---
+        // Jika user TIDAK Premium, cek limit
+        if (!user.isPremium) {
+            const startOfDay = new Date();
+            startOfDay.setHours(0, 0, 0, 0);
+
+            const endOfDay = new Date();
+            endOfDay.setHours(23, 59, 59, 999);
+
+            // Hitung jurnal yang dibuat HARI INI
             const count = await Journal.countDocuments({
-                user: user.id,
-                createdAt: { $gte: today }
+                user: user._id,
+                createdAt: { $gte: startOfDay, $lte: endOfDay }
             });
 
-            // Jika sudah ada 1 (atau lebih), tolak request
+            // Batas 1 jurnal per hari untuk free user
             if (count >= 1) {
                 return res.status(403).json({
-                    message: 'Limit Harian Habis! Upgrade ke Premium untuk curhat sepuasnya.',
-                    requiresUpgrade: true // Flag khusus untuk Frontend memunculkan popup bayar
+                    message: 'Kuota Harian Habis! Upgrade ke Premium untuk curhat sepuasnya.',
+                    requiresUpgrade: true
                 });
             }
         }
+        // -------------------------------------
 
-        // 3. Panggil AI Service (Gemini)
+        // 1. Panggil AI Service
         const aiResult = await analyzeJournal(text);
 
-        // 4. Simpan ke Database
+        // 2. Simpan ke Database
         const newEntry = await Journal.create({
-            user: req.user.id, // Hubungkan jurnal dengan ID pemiliknya
+            user: user._id,
             originalText: text,
-            ...aiResult // Masukkan semua data dari AI (mood, xp_gained, stats, dll)
+            ...aiResult // Spread operator untuk memasukkan mood, xp, stats, dll
         });
 
-        console.log(`Jurnal baru dibuat oleh ${user.username}:`, newEntry._id);
+        console.log(`Jurnal baru sukses: ${newEntry._id} oleh ${user.username}`);
 
-        // 5. Kirim respon sukses ke Frontend
+        // 3. Kirim respon ke Frontend
         res.status(200).json({
             success: true,
             data: newEntry
         });
 
     } catch (error) {
-        console.error("Server Error di createAnalysis:", error);
-        res.status(500).json({ message: 'Gagal memproses analisis jurnal.' });
+        console.error("Controller Error:", error);
+        res.status(500).json({ message: 'Terjadi kesalahan pada server.' });
     }
 };
 
-// @desc    Ambil semua riwayat jurnal milik user yang login
+// @desc    Ambil History Jurnal User
 // @route   GET /api/journal
 // @access  Private
 const getAllJournals = async (req, res) => {
     try {
-        // Cari jurnal yang field 'user'-nya sama dengan ID user yang sedang login
-        // Sort: -1 artinya urutan menurun (terbaru paling atas)
-        const journals = await Journal.find({ user: req.user.id }).sort({ createdAt: -1 });
+        const journals = await Journal.find({ user: req.user._id })
+            .sort({ createdAt: -1 }); // Urutkan dari yang terbaru
 
         res.status(200).json({
             success: true,
             data: journals
         });
     } catch (error) {
-        console.error("Server Error di getAllJournals:", error);
-        res.status(500).json({ message: 'Gagal mengambil data history.' });
+        console.error("Get History Error:", error);
+        res.status(500).json({ message: 'Gagal mengambil riwayat.' });
     }
 };
 
